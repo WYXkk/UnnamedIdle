@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<!-- 查看源代码除了可能省去打几轮的时间以外不会对解题有任何帮助。 -->
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Unnamed Idle</title>
+	<style type="text/css">
+		div{display: inline;}
+	</style>
+</head>
+<body>
+	中文 | <a href="index_en.html">English</a><br><br>
+	<div id="tas" style='display:none;'>
+		TAS 工具<br>
+		<input type="checkbox" id="pause"><label>暂停</label><br>
+		<button onclick="tastick()">时间跳跃</button> <input id="ticklength" style="width: 60px;"> 秒<br>
+		<br>
+	</div>
+	<div id="goal">达到 goal 金币以通关！</div><br>
+	你现在拥有 <div id="current">1</div> 金币。<br>
+	你每秒生产 <div id="generate">0</div> 金币。<br>
+	你已经玩了 <div id="time">0</div> 秒。<br>
+	<br>
+	可重复升级：<br>
+	<div id="repurchase">这里暂时什么都没有<br></div>
+	<br>
+	一次性升级：<br>
+	<input type="checkbox" id="hidebought"><label>隐藏已购买的一次性升级</label><br>
+	<div id="onetime">这里暂时什么都没有<br></div>
+	<br>
+	<button onclick="reset()">重置游戏</button>
+	<br><br>
+	<div id="puzzle" style='display:none;'>
+		这个游戏本身是一个谜题！它的答案是一个英文单词或词组。<br>你可以在下面的输入框中验证答案：（不区分大小写，忽略空格）<br>
+		<input type="text" id="answer" placeholder="输入答案...">
+		<button onclick="checkAnswer()">验证答案</button>
+		<div id="status" style='display:none;'></div>
+	</div>
+	<script type="text/javascript">
+		// 常量
+		const new_player={
+			time_played:0,
+			time_clear:Infinity,
+			points:1,
+			best_points:1,
+			upgrades:{},
+			TAS_unlocked:false,
+		};
+		const upgrades=[
+			{
+				id:"producer",
+				name:"金币生成器",
+				description:"每个金币生成器每秒生成 1 金币。",
+				repurchase:true,
+				unlock:()=>true,
+				price:n=>2**n,
+				effect:n=>n,
+				format:n=>`+${n}/秒`,
+			},
+			{
+				id:"multiplier",
+				name:"金币翻倍器",
+				description:"每个金币翻倍器 +1 倍金币产量。",
+				repurchase:true,
+				price:n=>10*3**n,
+				effect:n=>n+1,
+			},
+			{
+				id:"super_multiplier",
+				name:"高级翻倍器",
+				description:"每个高级翻倍器 x2 倍金币产量。",
+				repurchase:true,
+				price:n=>1000*5**n,
+				effect:n=>2**n,
+			},
+			{
+				id:"mult1",
+				name:"小加倍器",
+				description:"金币产量 x1.93513。",
+				repurchase:false,
+				price_:100,
+				effect_:1.93513,
+			},
+			{
+				id:"mult2",
+				name:"中加倍器",
+				description:"金币产量 x2.114514。",
+				repurchase:false,
+				price_:400,
+				effect_:2.114514,
+			},
+			{
+				id:"multself",
+				name:"自加倍器",
+				description:"金币产量乘以你购买的一次性升级个数。",
+				repurchase:false,
+				price_:2500,
+				effect:n=>n==0?1:onetime.map(x=>x.count()).reduce((a,b)=>a+b),
+			},
+			{
+				id:"mult3",
+				name:"大加倍器",
+				description:"金币产量 x2.31596881。",
+				repurchase:false,
+				price_:20000,
+				effect_:2.31596881,
+			},
+			{
+				id:"useless",
+				name:"无用升级",
+				description:"这个升级不提供任何加成。",
+				repurchase:false,
+				price_:100000,
+				effect_:1,
+			},
+			{
+				id:"useful",
+				name:"有用升级",
+				description:"金币产量 x5.2693。",
+				repurchase:false,
+				price_:1000000,
+				effect_:5.2693,
+			},
+			{
+				id:"final",
+				name:"最终升级",
+				description:"金币产量乘以大约 2.158432。",
+				repurchase:false,
+				price_:10000000,
+				effect_:42360777296274749166738281250000000000000/19625717100405696638900431044147867418733,
+				format:n=>n==0?'x1':'x42360777296274749166738281250000000000000/19625717100405696638900431044147867418733'
+			},
+		];
+		upgrades.forEach(x=>{
+			if(!x.repurchase){
+				x.price=n=>x.price_;
+				x.effect=x.effect??(n=>(n==0?1:x.effect_));
+			}
+			x.count=()=>player.upgrades[x.id];
+			x.format=x.format??(n=>`x${x.effect(n)}`);
+			x.unlock=x.unlock??(()=>player.best_points>=x.price(0)/2);
+		});
+		let repurchase=upgrades.filter(x=>x.repurchase);
+		let onetime=upgrades.filter(x=>!x.repurchase);
+		const save_location='UnnamedIdle';
+		const goal=1e9;
+		const perfect_time=100;
+
+		// 游戏逻辑
+		let player={};
+		let lastupdate=0;
+		function generate(){
+			return upgrades.map(x=>x.effect(x.count())).reduce((x,y)=>x*y,1);
+		}
+		function gameloop(){
+			let now=Date.now();
+			let dt=(now-lastupdate)/1000;
+			lastupdate=now;
+			if(!get('pause').checked) tick(dt);
+		}
+		function tastick(){
+			let dt=parseFloat(get('ticklength').value);
+			if(dt>=0) tick(dt);
+		}
+		function tick(dt){
+			player.time_played+=dt;
+			player.points+=dt*generate();
+			if(player.points>=goal&&player.best_points<goal) win();
+			player.best_points=Math.max(player.best_points,player.points);
+		}
+		function goaltext(firstWin=false){
+			if(player.best_points<goal) return `达到 ${goal} 金币以通关！`;
+			let t=player.time_clear;
+			let s=`你在 ${t.toFixed(4)} 秒内通关了游戏！\n`;
+			if(firstWin){
+				s+='你可以继续游玩，或者……重置游戏尝试速通？\n';
+				s+=`为了帮助你刷速通记录，一个简单的 TAS 工具已经解锁，且不受重置游戏影响。`;
+				return s;
+			}
+			if(t<perfect_time) s+='……你是不是开挂了？';
+			else if(t<=perfect_time*1.1) s+=`${perfect_time} 秒以内真的是可能的吗？`;
+			else if(t<=perfect_time*1.2) s+=`很接近 ${perfect_time} 秒。或许可以尝试 sub${perfect_time}？`;
+			else s+=`你可以继续游玩，或者……重置游戏尝试速通？`;
+			return s;
+		}
+		function win(){
+			player.time_clear=player.time_played;
+			player.best_points=Math.max(player.best_points,player.points);
+			alert(goaltext(!player.TAS_unlocked));
+			player.TAS_unlocked=true;
+		}
+		function buyupgrade(id,real=true){
+			let upg=upgrades.find(x=>x.id==id);
+			if(!upg.unlock()) return false;
+			if(!upg.repurchase&&upg.count()!=0) return false;
+			let cost=upg.price(upg.count());
+			if(player.points>=cost){
+				if(real){
+					player.points-=cost;
+					player.upgrades[id]+=1;
+				}
+				return true;
+			}
+			return false;
+		}
+
+		// 存档逻辑
+		function migirate(player){
+			let temp=structuredClone(new_player);
+			temp.time_played=player.time_played??temp.time_played;
+			temp.time_clear=player.time_clear??temp.time_clear;
+			temp.points=player.points??temp.points;
+			temp.best_points=player.best_points??temp.best_points;
+			temp.TAS_unlocked=player.TAS_unlocked??temp.TAS_unlocked;
+			upgrades.forEach(x=>temp.upgrades[x.id]=player.upgrades[x.id]??0);
+			return temp;
+		}
+		function load(){
+			let save=localStorage.getItem(save_location)??btoa(JSON.stringify(new_player));
+			player=migirate(JSON.parse(atob(save)));
+			lastupdate=Date.now();
+		}
+		function save(){
+			localStorage.setItem(save_location,btoa(JSON.stringify(player)));
+		}
+		function reset(){
+			if(confirm('你确定要重置游戏吗？这不会带来任何加成，只会重置进度。')){
+				lastupdate=Date.now();
+				let flag=player.TAS_unlocked;
+				player=migirate(structuredClone(new_player));
+				player.TAS_unlocked=flag;
+			}
+		}
+
+		// 显示逻辑
+		function get(id){return document.getElementById(id);}
+		function initvisual(){
+			upgrades.forEach(x=>{
+				x.show=()=>(x.unlock()&&(x.repurchase||(x.count()==0)||!get('hidebought').checked));
+			})
+
+			get('repurchase').innerHTML=repurchase.map(x=>`<div id='${x.id}' style='display:none;'>${x.name}：${x.description} <button onclick='buyupgrade("${x.id}")' id='${x.id}btn' disabled>购买：1 金币</button> 当前：<div id='${x.id}info'>未知效果</div><br></div>`).join('')+`<div id='nothing1'>这里还什么都没有<br></div>`;
+
+			get('onetime').innerHTML=onetime.map(x=>`<div id='${x.id}' style='display:none;'>${x.name}：${x.description} <button onclick='buyupgrade("${x.id}")' id='${x.id}btn' disabled>购买：1 金币</button> 当前：<div id='${x.id}info'>未知效果</div><br></div>`).join('')+`<div id='nothing2'>这里还什么都没有<br></div>`;
+		}
+		function updatevisual(){
+			upgrades.forEach(x=>{
+				get(x.id).style.display=x.show()?'':'none';
+				get(x.id+'btn').disabled=!buyupgrade(x.id,false);
+				get(x.id+'btn').innerHTML=((!x.repurchase)&&(x.count()!=0)?'已':'')+`购买：${x.price(x.count())} 金币`;
+				get(x.id+'info').innerHTML=x.format(x.count());
+			});
+			get('nothing1').style.display=(repurchase.map(x=>x.show()).reduce((x,y)=>x||y,false))?'none':'';
+			get('nothing2').style.display=(onetime.map(x=>x.show()).reduce((x,y)=>x||y,false))?'none':'';
+
+			get('goal').innerHTML=goaltext().replace('\n','<br>');
+			get('current').innerHTML=player.points.toFixed(4);
+			get('generate').innerHTML=generate().toFixed(4);
+			get('time').innerHTML=player.time_played.toFixed(4);
+			get('tas').style.display=player.TAS_unlocked?'':'none';
+			get('puzzle').style.display=player.TAS_unlocked?'':'none';
+		}
+
+		// 谜题
+		async function sha256(s) {
+			const data = new TextEncoder().encode(s);
+			const hash = await crypto.subtle.digest("SHA-256", data);
+			return [...new Uint8Array(hash)]
+				.map(x => x.toString(16).padStart(2, "0"))
+				.join("");
+		}
+		async function checkAnswer(){
+			let answer=get('answer').value.toUpperCase().replace(/\s/g,'');
+			let correct=await sha256(answer)==="ccf7211df66dc792495e3f51845999c40bdc69d46b8fda6e425dc0f17a0f70ca";
+			get('status').style.display='';
+			get('status').innerHTML=correct?'答案正确！':'答案不正确，请再试一次。';
+			get('status').style.color=correct?'green':'red';
+		}
+		get('answer').addEventListener('keydown', function(event) {
+			if (event.key === 'Enter') {
+				checkAnswer();
+			}
+		});
+
+		// 执行
+		load();
+		initvisual();
+		setInterval(()=>{gameloop();updatevisual();save();},50);	
+	</script>
+</body>
+</html>

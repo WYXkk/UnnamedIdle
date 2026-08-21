@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<!-- Viewing the source code will not help with solving the puzzle, except possibly saving some time. -->
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Unnamed Idle</title>
+	<style type="text/css">
+		div{display: inline;}
+	</style>
+</head>
+<body>
+	<a href="index.html">中文</a> | English<br><br>
+	<div id="tas" style='display:none;'>
+		TAS tool<br>
+		<input type="checkbox" id="pause"><label>Pause</label><br>
+		<button onclick="tastick()">Time Skip</button> <input id="ticklength" style="width: 60px;"> seconds<br>
+		<br>
+	</div>
+	<div id="goal">Reach goal coins to win!</div><br>
+	You currently have <div id="current">1</div> coins.<br>
+	You generate <div id="generate">0</div> coins per second.<br>
+	You have played for <div id="time">0</div> seconds.<br>
+	<br>
+	Repeatable Upgrades:<br>
+	<div id="repurchase">Nothing here yet<br></div>
+	<br>
+	One-time Upgrades:<br>
+	<input type="checkbox" id="hidebought"><label>Hide purchased one-time upgrades</label><br>
+	<div id="onetime">Nothing here yet<br></div>
+	<br>
+	<button onclick="reset()">Reset Game</button>
+	<br><br>
+	<div id="puzzle" style='display:none;'>
+		This game itself is a puzzle! Its answer is an English word or phrase. <br>You can verify the answer in the input box below: (case-insensitive, spaces ignored)<br>
+		<input type="text" id="answer" placeholder="Enter answer...">
+		<button onclick="checkAnswer()">Check Answer</button>
+		<div id="status" style='display:none;'></div>
+	</div>
+	<script type="text/javascript">
+		// 常量
+		const new_player={
+			time_played:0,
+			time_clear:Infinity,
+			points:1,
+			best_points:1,
+			upgrades:{},
+			TAS_unlocked:false,
+		};
+		const upgrades=[
+			{
+				id:"producer",
+				name:"Coin Producer",
+				description:"Each coin producer generates 1 coin per second.",
+				repurchase:true,
+				unlock:()=>true,
+				price:n=>2**n,
+				effect:n=>n,
+				format:n=>`+${n}/sec`,
+			},
+			{
+				id:"multiplier",
+				name:"Coin Multiplier",
+				description:"Each coin multiplier +1x coin production.",
+				repurchase:true,
+				price:n=>10*3**n,
+				effect:n=>n+1,
+			},
+			{
+				id:"super_multiplier",
+				name:"Super Multiplier",
+				description:"Each super multiplier x2 coin production.",
+				repurchase:true,
+				price:n=>1000*5**n,
+				effect:n=>2**n,
+			},
+			{
+				id:"mult1",
+				name:"Small Multiplier",
+				description:"Coin production x1.93513.",
+				repurchase:false,
+				price_:100,
+				effect_:1.93513,
+			},
+			{
+				id:"mult2",
+				name:"Medium Multiplier",
+				description:"Coin production x2.114514.",
+				repurchase:false,
+				price_:400,
+				effect_:2.114514,
+			},
+			{
+				id:"multself",
+				name:"Self Multiplier",
+				description:"Coin production is multiplied by the number of one-time upgrades you have purchased.",
+				repurchase:false,
+				price_:2500,
+				effect:n=>n==0?1:onetime.map(x=>x.count()).reduce((a,b)=>a+b),
+			},
+			{
+				id:"mult3",
+				name:"Large Multiplier",
+				description:"Coin production x2.31596881.",
+				repurchase:false,
+				price_:20000,
+				effect_:2.31596881,
+			},
+			{
+				id:"useless",
+				name:"Useless Upgrade",
+				description:"This upgrade provides no bonus.",
+				repurchase:false,
+				price_:100000,
+				effect_:1,
+			},
+			{
+				id:"useful",
+				name:"Useful Upgrade",
+				description:"Coin production x5.2693.",
+				repurchase:false,
+				price_:1000000,
+				effect_:5.2693,
+			},
+			{
+				id:"final",
+				name:"Final Upgrade",
+				description:"Coin production is multiplied by approximately 2.158432.",
+				repurchase:false,
+				price_:10000000,
+				effect_:42360777296274749166738281250000000000000/19625717100405696638900431044147867418733,
+				format:n=>n==0?'x1':'x42360777296274749166738281250000000000000/19625717100405696638900431044147867418733'
+			},
+		];
+		upgrades.forEach(x=>{
+			if(!x.repurchase){
+				x.price=n=>x.price_;
+				x.effect=x.effect??(n=>(n==0?1:x.effect_));
+			}
+			x.count=()=>player.upgrades[x.id];
+			x.format=x.format??(n=>`x${x.effect(n)}`);
+			x.unlock=x.unlock??(()=>player.best_points>=x.price(0)/2);
+		});
+		let repurchase=upgrades.filter(x=>x.repurchase);
+		let onetime=upgrades.filter(x=>!x.repurchase);
+		const save_location='UnnamedIdle';
+		const goal=1e9;
+		const perfect_time=100;
+
+		// 游戏逻辑
+		let player={};
+		let lastupdate=0;
+		function generate(){
+			return upgrades.map(x=>x.effect(x.count())).reduce((x,y)=>x*y,1);
+		}
+		function gameloop(){
+			let now=Date.now();
+			let dt=(now-lastupdate)/1000;
+			lastupdate=now;
+			if(!get('pause').checked) tick(dt);
+		}
+		function tastick(){
+			let dt=parseFloat(get('ticklength').value);
+			if(dt>=0) tick(dt);
+		}
+		function tick(dt){
+			player.time_played+=dt;
+			player.points+=dt*generate();
+			if(player.points>=goal&&player.best_points<goal) win();
+			player.best_points=Math.max(player.best_points,player.points);
+		}
+		function goaltext(firstWin=false){
+			if(player.best_points<goal) return `Reach ${goal} coins to win!`;
+			let t=player.time_clear;
+			let s=`You completed the game in ${t.toFixed(4)} seconds!\n`;
+			if(firstWin){
+				s+='You can continue playing, or... reset the game to attempt a speedrun?\n';
+				s+=`To help you with speedrunning, a simple TAS tool has been unlocked and is not affected by resetting the game.`;
+				return s;
+			}
+			if(t<perfect_time) s+='……you might be cheating?';
+			else if(t<=perfect_time*1.1) s+=`${perfect_time} seconds or less is really possible?`;
+			else if(t<=perfect_time*1.2) s+=`You're very close to ${perfect_time} seconds. Maybe you can try for a sub${perfect_time}?`;
+			else s+=`You can continue playing, or... reset the game to attempt a speedrun?`;
+			return s;
+		}
+		function win(){
+			player.time_clear=player.time_played;
+			player.best_points=Math.max(player.best_points,player.points);
+			alert(goaltext(!player.TAS_unlocked));
+			player.TAS_unlocked=true;
+		}
+		function buyupgrade(id,real=true){
+			let upg=upgrades.find(x=>x.id==id);
+			if(!upg.unlock()) return false;
+			if(!upg.repurchase&&upg.count()!=0) return false;
+			let cost=upg.price(upg.count());
+			if(player.points>=cost){
+				if(real){
+					player.points-=cost;
+					player.upgrades[id]+=1;
+				}
+				return true;
+			}
+			return false;
+		}
+
+		// 存档逻辑
+		function migirate(player){
+			let temp=structuredClone(new_player);
+			temp.time_played=player.time_played??temp.time_played;
+			temp.time_clear=player.time_clear??temp.time_clear;
+			temp.points=player.points??temp.points;
+			temp.best_points=player.best_points??temp.best_points;
+			temp.TAS_unlocked=player.TAS_unlocked??temp.TAS_unlocked;
+			upgrades.forEach(x=>temp.upgrades[x.id]=player.upgrades[x.id]??0);
+			return temp;
+		}
+		function load(){
+			let save=localStorage.getItem(save_location)??btoa(JSON.stringify(new_player));
+			player=migirate(JSON.parse(atob(save)));
+			lastupdate=Date.now();
+		}
+		function save(){
+			localStorage.setItem(save_location,btoa(JSON.stringify(player)));
+		}
+		function reset(){
+			if(confirm('Are you sure you want to reset the game? This will not provide any bonuses, only reset your progress.')){
+				lastupdate=Date.now();
+				let flag=player.TAS_unlocked;
+				player=migirate(structuredClone(new_player));
+				player.TAS_unlocked=flag;
+			}
+		}
+
+		// 显示逻辑
+		function get(id){return document.getElementById(id);}
+		function initvisual(){
+			upgrades.forEach(x=>{
+				x.show=()=>(x.unlock()&&(x.repurchase||(x.count()==0)||!get('hidebought').checked));
+			})
+
+			get('repurchase').innerHTML=repurchase.map(x=>`<div id='${x.id}' style='display:none;'>${x.name}: ${x.description} <button onclick='buyupgrade("${x.id}")' id='${x.id}btn' disabled>Purchase: 1 Coin</button> Current: <div id='${x.id}info'>Unknown Effect</div><br></div>`).join('')+`<div id='nothing1'>Nothing here yet<br></div>`;
+
+			get('onetime').innerHTML=onetime.map(x=>`<div id='${x.id}' style='display:none;'>${x.name}: ${x.description} <button onclick='buyupgrade("${x.id}")' id='${x.id}btn' disabled>Purchase: 1 Coin</button> Current: <div id='${x.id}info'>Unknown Effect</div><br></div>`).join('')+`<div id='nothing2'>Nothing here yet<br></div>`;
+		}
+		function updatevisual(){
+			upgrades.forEach(x=>{
+				get(x.id).style.display=x.show()?'':'none';
+				get(x.id+'btn').disabled=!buyupgrade(x.id,false);
+				get(x.id+'btn').innerHTML=((!x.repurchase)&&(x.count()!=0)?'Purchased':'Purchase')+`: ${x.price(x.count())} Coins`;
+				get(x.id+'info').innerHTML=x.format(x.count());
+			});
+			get('nothing1').style.display=(repurchase.map(x=>x.show()).reduce((x,y)=>x||y,false))?'none':'';
+			get('nothing2').style.display=(onetime.map(x=>x.show()).reduce((x,y)=>x||y,false))?'none':'';
+
+			get('goal').innerHTML=goaltext().replace('\n','<br>');
+			get('current').innerHTML=player.points.toFixed(4);
+			get('generate').innerHTML=generate().toFixed(4);
+			get('time').innerHTML=player.time_played.toFixed(4);
+			get('tas').style.display=player.TAS_unlocked?'':'none';
+			get('puzzle').style.display=player.TAS_unlocked?'':'none';
+		}
+		
+		// 谜题
+		async function sha256(s) {
+			const data = new TextEncoder().encode(s);
+			const hash = await crypto.subtle.digest("SHA-256", data);
+			return [...new Uint8Array(hash)]
+				.map(x => x.toString(16).padStart(2, "0"))
+				.join("");
+		}
+		async function checkAnswer(){
+			let answer=get('answer').value.toUpperCase().replace(/\s/g,'');
+			let correct=await sha256(answer)==="ccf7211df66dc792495e3f51845999c40bdc69d46b8fda6e425dc0f17a0f70ca";
+			get('status').style.display='';
+			get('status').innerHTML=correct?'Correct!':'Incorrect, please try again.';
+			get('status').style.color=correct?'green':'red';
+		}
+		get('answer').addEventListener('keydown', function(event) {
+			if (event.key === 'Enter') {
+				checkAnswer();
+			}
+		});
+
+		// 执行
+		load();
+		initvisual();
+		setInterval(()=>{gameloop();updatevisual();save();},50);	
+	</script>
+</body>
+</html>
